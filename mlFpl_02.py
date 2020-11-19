@@ -17,7 +17,7 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVR
 import csv
 from itertools import permutations
-from math import factorial
+from math import floor
 import numpy as np
 
 # Reading fixture data in
@@ -89,9 +89,11 @@ def xStat(team_val, Stat, result):
     # Normalising prob of xStat per 90
     xStat_temp = np.nan_to_num(xStat_temp)
     xStat_norm = xStat_temp / sum(xStat_temp)
+    # Sorting prob to form cdf
     xStat_sort = np.sort(xStat_norm)
+    # Capture where orignal indices go
     xStat_plyrsort = np.argsort(xStat_norm)
-    # print(team['second_name'].values[xStat_plyrsort])
+    # print(team['web_name'].values[xStat_plyrsort])
     xStat_cum = np.cumsum(xStat_sort)
     # xStat_GW = [[np.zeros(len(xStat_cum))]]
     xStat_GW = []
@@ -99,18 +101,27 @@ def xStat(team_val, Stat, result):
     for event in range(result):    
         seed = np.random.rand(1)
         # print(seed)
+        # Loop through players to find where 
         for plyr in range(len(xStat_cum)):
             if xStat_cum[plyr] > seed:
                 plyr_stat = xStat_plyrsort[plyr]
-                xStat_GW.append(team['second_name'].values[plyr_stat])
+                xStat_GW.append(team['web_name'].values[plyr_stat])
                 break
     # xStat_GW = np.around(xStat_norm * result)
     # return team['second_name'][xStat_GW == 1]
     return xStat_GW
 
-#Printing predictions to terminal 
+#Printing predictions to terminal, KEY LINE FOR GW INPUT HERE!!!
 current_gw = 9
 gw_fixt = fixtures[(fixtures['event'].values == current_gw)]
+plyrScore = np.zeros(600)
+
+gk = players_raw['element_type'].values == 1
+defend = players_raw['element_type'].values == 2
+mid = players_raw['element_type'].values == 3
+att = players_raw['element_type'].values == 4
+
+probMins = players_raw['minutes'].values > 60 * 9
 
 for row in range(len(pred_h_score[fixtures['event'].values == current_gw])):
     # Define teams and result for fixture
@@ -132,4 +143,115 @@ for row in range(len(pred_h_score[fixtures['event'].values == current_gw])):
     print('Asists:', h_xA, a_xA)
     print() 
     # print(pred_a_score[fixtures['event'].values == 7][row])
+    for event in range(len(h_xA)):
+        hAscore = players_raw['web_name'].values == h_xA[event]
+        hAscore_temp = hAscore * 3
+        hGscore = players_raw['web_name'].values == h_xG[event]
+        hGscore_temp = hGscore * 6 * gk
+        hGscore_temp += hGscore * 6 * defend
+        hGscore_temp += hGscore * 5 * mid
+        hGscore_temp += hGscore * 4 * att
+        plyrScore += hAscore_temp + hGscore_temp
+        
+    for event in range(len(a_xA)):
+        Ascore = players_raw['web_name'].values == a_xA[event]
+        Ascore_temp = Ascore * 3
+        Gscore = players_raw['web_name'].values == a_xG[event]
+        Gscore_temp = Gscore * 6 * gk
+        Gscore_temp += Gscore * 6 * defend
+        Gscore_temp += Gscore * 5 * mid
+        Gscore_temp += Gscore * 4 * att
+        plyrScore += Ascore_temp + Gscore_temp
+        
+    if result_a == 0:
+        hTeam = players_raw['team'].values == teamcode_h
+        csScore = hTeam * gk * 6 * probMins
+        csScore += hTeam * defend * 6 * probMins
+        plyrScore += csScore
+        
+    if result_h == 0:
+        aTeam = players_raw['team'].values == teamcode_a
+        csScore = aTeam * gk * 6 * probMins
+        csScore += aTeam * defend * 6 * probMins
+        plyrScore += csScore  
+        
+    if result_a >= 2:
+        hTeam = players_raw['team'].values == teamcode_h
+        csScore = hTeam * gk * -1 * floor(result_a) * probMins
+        csScore += hTeam * defend * -1 * floor(result_a) * probMins
+        plyrScore += csScore
+        
+    if result_h >= 2:
+        aTeam = players_raw['team'].values == teamcode_a
+        csScore = aTeam * gk * -1 * floor(result_h) * probMins
+        csScore += aTeam * defend * -1 * floor(result_h) * probMins
+        plyrScore += csScore  
+        
+plyrScore += probMins * 2
+    
+# for plyr in range(len(plyrScore)):
+#     if plyrScore[plyr] != 0:
+#         print(players_raw['web_name'].values[plyr],' : ',plyrScore[plyr] )
 
+# create arrays to define whether entries count against a limit
+costs = players_raw['now_cost']
+gk_gw = np.array(players_raw['element_type'].values == 1)
+defend_gw = np.array(players_raw['element_type'].values == 2)
+mid_gw = np.array(players_raw['element_type'].values == 3)
+att_gw = np.array(players_raw['element_type'].values == 4)
+# ast = np.array(players_raw['team'].values == 2) # set to villa currently
+#  i.e every player counts against player limit
+players = np.ones(len(players_raw))
+
+# Set up boundaries
+params = np.array([
+    costs, 
+    gk,
+    defend,
+    mid,
+    att,
+    # ast,
+    players,
+   ])
+
+# Set limits
+upper_bounds = np.array([
+    1000, #cost
+    2, #gk
+    5, #def
+    5, #mid
+    3, #att
+    # 3, #players from team
+    15, #player limit
+    ])
+
+bounds = [(0,1) for x in range(len(players_raw))]
+
+# linear progression to solve minimise negative total points (so most points at end)
+from scipy.optimize import linprog
+
+selected = linprog(
+    -plyrScore, 
+    params, 
+    upper_bounds,
+    bounds = bounds,
+   ).x
+
+#round to tidy answers
+selected_rnd = np.around(selected)
+
+gk_selected = gk * selected_rnd
+def_selected = defend * selected_rnd
+mid_selected = mid * selected_rnd
+att_selected = att * selected_rnd
+
+# print('cost: %.2f' % (players_raw['now_cost'] * selected_rnd).sum())
+# print('Gk: %.2f' % ( gk_selected).sum())
+# print('Def: %.2f' % (def_selected).sum())
+# print('Mid: %.2f' % (mid_selected).sum())
+# print('Att: %.2f' % (att_selected).sum())
+
+print("Goalkeepers: ","\n",players_raw['web_name'][gk_selected == 1].values,"\n",
+      "Defenders: ", "\n", players_raw['web_name'][def_selected == 1].values,"\n",
+      "Midfielders: ", "\n", players_raw['web_name'][mid_selected == 1].values,"\n",
+      "Strikers: ", "\n", players_raw['web_name'][att_selected == 1].values)
