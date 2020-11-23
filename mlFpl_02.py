@@ -19,6 +19,7 @@ import csv
 from itertools import permutations
 from math import floor
 import numpy as np
+import scipy
 
 # Reading fixture data in
 fn = 'fixtures.csv'
@@ -40,8 +41,16 @@ teams = ['Arsenal', 'Aston Villa', 'Brighton', 'Burnley', 'Chelsea', 'Crystal Pa
 
 # Predicting scores from previous FDR results 
 
+#Removing outliers by filtering results with z score > 2
+z_h = np.abs(scipy.stats.zscore(fixtures_h['team_h_score'].values))
+z_a = np.abs(scipy.stats.zscore(fixtures_a['team_a_score'].values))
+
+fixtures_h_o = fixtures_h[(z_h < 2)]
+fixtures_a_o = fixtures_a[(z_a < 2)]
+
+
 # Split-out validation dataset - home scores
-array = fixtures_h.values
+array = fixtures_h_o.values
 X = array[:,0:2]
 y = array[:,2]
 
@@ -54,7 +63,7 @@ model_h.fit(X, y)
 # cv_results = cross_val_score(model_h, X_train, Y_train, cv=kfold, scoring='accuracy')
 
 # Split-out validation dataset - away scores
-array = fixtures_a.values
+array = fixtures_a_o.values
 X = array[:,0:2]
 y = array[:,2]
 
@@ -189,69 +198,72 @@ for row in range(len(pred_h_score[fixtures['event'].values == current_gw])):
         
 plyrScore += probMins * 2
     
-# for plyr in range(len(plyrScore)):
-#     if plyrScore[plyr] != 0:
-#         print(players_raw['web_name'].values[plyr],' : ',plyrScore[plyr] )
+plyrScore_sort = np.sort(plyrScore)
+    # Capture where orignal indices go
+plyrScore_ind = np.argsort(plyrScore)
 
-# create arrays to define whether entries count against a limit
-costs = players_raw['now_cost']
-gk_gw = np.array(players_raw['element_type'].values == 1)
-defend_gw = np.array(players_raw['element_type'].values == 2)
-mid_gw = np.array(players_raw['element_type'].values == 3)
-att_gw = np.array(players_raw['element_type'].values == 4)
-# ast = np.array(players_raw['team'].values == 2) # set to villa currently
-#  i.e every player counts against player limit
-players = np.ones(len(players_raw))
+for row in range(1,16):
+    print('%s : %.0f' %(players_raw['web_name'].values[plyrScore_ind[-row]], plyrScore_sort[-row]))
 
-# Set up boundaries
-params = np.array([
-    costs, 
-    gk,
-    defend,
-    mid,
-    att,
-    # ast,
-    players,
-   ])
+# # create arrays to define whether entries count against a limit
+# costs = players_raw['now_cost']
+# gk_gw = np.array(players_raw['element_type'].values == 1)
+# defend_gw = np.array(players_raw['element_type'].values == 2)
+# mid_gw = np.array(players_raw['element_type'].values == 3)
+# att_gw = np.array(players_raw['element_type'].values == 4)
+# # ast = np.array(players_raw['team'].values == 2) # set to villa currently
+# #  i.e every player counts against player limit
+# players = np.ones(len(players_raw))
 
-# Set limits
-upper_bounds = np.array([
-    1000, #cost
-    2, #gk
-    5, #def
-    5, #mid
-    3, #att
-    # 3, #players from team
-    15, #player limit
-    ])
+# # Set up boundaries
+# params = np.array([
+#     costs, 
+#     gk,
+#     defend,
+#     mid,
+#     att,
+#     # ast,
+#     players,
+#    ])
 
-bounds = [(0,1) for x in range(len(players_raw))]
+# # Set limits
+# upper_bounds = np.array([
+#     1000, #cost
+#     2, #gk
+#     5, #def
+#     5, #mid
+#     3, #att
+#     # 3, #players from team
+#     15, #player limit
+#     ])
 
-# linear progression to solve minimise negative total points (so most points at end)
-from scipy.optimize import linprog
+# bounds = [(0,1) for x in range(len(players_raw))]
 
-selected = linprog(
-    -plyrScore, 
-    params, 
-    upper_bounds,
-    bounds = bounds,
-   ).x
+# # linear progression to solve minimise negative total points (so most points at end)
+# from scipy.optimize import linprog
 
-#round to tidy answers
-selected_rnd = np.around(selected)
+# selected = linprog(
+#     -plyrScore, 
+#     params, 
+#     upper_bounds,
+#     bounds = bounds,
+#    ).x
 
-gk_selected = gk * selected_rnd
-def_selected = defend * selected_rnd
-mid_selected = mid * selected_rnd
-att_selected = att * selected_rnd
+# #round to tidy answers
+# selected_rnd = np.around(selected)
 
-# print('cost: %.2f' % (players_raw['now_cost'] * selected_rnd).sum())
-# print('Gk: %.2f' % ( gk_selected).sum())
-# print('Def: %.2f' % (def_selected).sum())
-# print('Mid: %.2f' % (mid_selected).sum())
-# print('Att: %.2f' % (att_selected).sum())
+# gk_selected = gk * selected_rnd
+# def_selected = defend * selected_rnd
+# mid_selected = mid * selected_rnd
+# att_selected = att * selected_rnd
 
-print("Goalkeepers: ","\n",players_raw['web_name'][gk_selected == 1].values,"\n",
-      "Defenders: ", "\n", players_raw['web_name'][def_selected == 1].values,"\n",
-      "Midfielders: ", "\n", players_raw['web_name'][mid_selected == 1].values,"\n",
-      "Strikers: ", "\n", players_raw['web_name'][att_selected == 1].values)
+# # print('cost: %.2f' % (players_raw['now_cost'] * selected_rnd).sum())
+# # print('Gk: %.2f' % ( gk_selected).sum())
+# # print('Def: %.2f' % (def_selected).sum())
+# # print('Mid: %.2f' % (mid_selected).sum())
+# # print('Att: %.2f' % (att_selected).sum())
+
+# print("Goalkeepers: ","\n",players_raw['web_name'][gk_selected == 1].values,"\n",
+#       "Defenders: ", "\n", players_raw['web_name'][def_selected == 1].values,"\n",
+#       "Midfielders: ", "\n", players_raw['web_name'][mid_selected == 1].values,"\n",
+#       "Strikers: ", "\n", players_raw['web_name'][att_selected == 1].values)
